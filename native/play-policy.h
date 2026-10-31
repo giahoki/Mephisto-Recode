@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <sstream>
 #include <string>
@@ -25,6 +26,21 @@ inline size_t choose(const std::vector<Candidate>& lines,int pieces,std::mt19937
     for(auto i:pool)weights.push_back(i==0?65.0:i==1?27.0:8.0);
     return pool[std::discrete_distribution<size_t>(weights.begin(),weights.end())(random)];
 }
+inline std::string selectMove(const std::string& engineMove,const std::vector<Candidate>& lines,int pieces,int skill,std::mt19937& random){
+    if(skill<20||lines.empty())return engineMove;
+    return lines[choose(lines,pieces,random)].move;
+}
+inline std::string avoidRepetition(const std::string& selected,const std::vector<Candidate>& lines,const std::vector<std::string>& repetitionMoves){
+    auto repeats=[&](const std::string& move){return std::find(repetitionMoves.begin(),repetitionMoves.end(),move)!=repetitionMoves.end();};
+    if(!repeats(selected)||lines.empty())return selected;
+    const auto& best=lines.front();
+    if((best.mating&&best.mate<0)||(!best.mating&&best.cp< -75))return selected; // Do not turn a saving draw into a forced loss.
+    for(const auto& c:lines){
+        if(repeats(c.move))continue;
+        if(c.mating&&c.mate>0)return c.move;
+        if(!best.mating&&!c.mating&&c.cp>=std::max(-50,best.cp-100))return c.move;
+    }return selected;
+}
 inline int delay(const std::vector<Candidate>& lines,int pieces,int legalCount,double clockSeconds,int computeMs,std::mt19937& random){
     int low=1800,high=5500;
     if(legalCount>0&&legalCount<=2){low=650;high=1600;}
@@ -36,4 +52,14 @@ inline int delay(const std::vector<Candidate>& lines,int pieces,int legalCount,d
     return std::max(100,std::uniform_int_distribution<int>(low,high)(random)-computeMs);
 }
 inline bool retryAllowed(int attempts,bool samePosition,bool fresh,bool focused){return attempts<3&&samePosition&&fresh&&focused;}
+struct FocusRecovery {
+    bool paused=true;uint64_t readyAfter=0;
+    bool update(bool ready,uint64_t now){
+        if(!ready){paused=true;readyAfter=0;return false;}
+        if(!paused)return false;
+        if(!readyAfter){readyAfter=now+400;return false;}
+        if(now<readyAfter)return false;
+        paused=false;return true;
+    }
+};
 }

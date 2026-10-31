@@ -37,7 +37,7 @@ for(const options of [{},{black:true},{lichess:true},{lichess:true,black:true}])
   assert.equal(state.orientation,options.black?'black':'white');
   assert.equal(state.left,128);assert.equal(state.top,168);
   assert.equal((await f.tick()).state.sequence,2);
-  f.hide();assert.equal(await f.tick(),undefined);
+  f.hide();assert.equal((await f.tick()).state.visible,false);
 }
 const unfocused=fixture();await unfocused.tick();unfocused.blur();assert.equal((await unfocused.tick()).state.focused,false);
 const zen=fixture({firefox:true,scale:1.5});await zen.tick();zen.mouse(60,70);

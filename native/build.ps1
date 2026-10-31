@@ -18,7 +18,7 @@ if (Test-Path -LiteralPath (Join-Path $root 'bin/engines')) {
     Get-ChildItem -LiteralPath (Join-Path $root 'bin/engines') | Copy-Item -Destination (Join-Path $out 'engines') -Recurse -Force
 }
 $core = Join-Path $out 'browser-core'
-$extensionFiles = @('manifest.json','lib/chess.js','src/scripts/desktop-core.js','src/scripts/desktop-background.js','src/popup/desktop.html','res/icons/icon16.png','res/icons/icon32.png','res/icons/icon48.png','res/icons/icon128.png')
+$extensionFiles = @('manifest.json','lib/chess.js','src/scripts/browser-input.js','src/scripts/desktop-core.js','src/scripts/desktop-background.js','src/popup/desktop.html','res/icons/icon16.png','res/icons/icon32.png','res/icons/icon48.png','res/icons/icon128.png')
 if ($Browser -ne 'firefox') { $extensionFiles += '_locales/en/messages.json' }
 foreach ($relative in $extensionFiles) {
     $destination = Join-Path $core $relative
@@ -33,7 +33,7 @@ if ($Browser -eq 'firefox') {
     $manifest.PSObject.Properties.Remove('update_url')
     # All manifest strings are literal; Firefox needs no locale loading at startup.
     $manifest.PSObject.Properties.Remove('default_locale')
-    $manifest.version = '3.0.3'
+    $manifest.version = '3.0.6'
     $obsoleteLocale = Join-Path $core '_locales/en/messages.json'
     if (Test-Path -LiteralPath $obsoleteLocale) { Remove-Item -LiteralPath $obsoleteLocale }
     foreach ($relativeDirectory in @('_locales/en','_locales')) {
@@ -87,12 +87,59 @@ $archiveItems = Get-ChildItem -LiteralPath $out | Where-Object { $_.Name -notmat
 $programArchive = Join-Path $delivery 'Mephisto-Program.zip'
 Compress-Archive -Path $archiveItems -DestinationPath $programArchive -Force
 if($Browser -eq 'firefox') {
-    Copy-Item -LiteralPath $xpi -Destination (Join-Path $delivery 'Mephisto-Firefox-addon.xpi') -Force
+    $addonDelivery = Join-Path $delivery 'Mephisto-Firefox-addon.xpi'
+    try { Copy-Item -LiteralPath $xpi -Destination $addonDelivery -Force -ErrorAction Stop }
+    catch [System.IO.IOException] {
+        $addonDelivery = Join-Path $delivery ("Mephisto-Firefox-addon-{0}.xpi" -f $manifest.version)
+        Copy-Item -LiteralPath $xpi -Destination $addonDelivery -Force
+        Write-Warning "The previous XPI is in use. New add-on saved separately: $addonDelivery"
+    }
+    Write-Host "Firefox add-on: $addonDelivery"
 } else {
     $extension = Join-Path $delivery 'extension'
     New-Item -ItemType Directory -Force $extension | Out-Null
     Get-ChildItem -LiteralPath $core | Copy-Item -Destination $extension -Recurse -Force
 }
-Write-Host "Built: $out/Mephisto.exe"
 Write-Host "Program: $programArchive"
 Write-Host "Browser payload: $delivery"
+
+# Only clean staging after validating the finished application archive.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$finishedZip = [IO.Compression.ZipFile]::OpenRead($programArchive)
+try {
+    if (!$finishedZip.GetEntry('Mephisto.exe') -or !$finishedZip.GetEntry('ui.xaml')) {
+        throw 'Application archive is incomplete; staging directories were preserved.'
+    }
+} finally { $finishedZip.Dispose() }
+
+$cleanupRoot = [IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar)
+foreach ($stagingName in @('desktop','desktop-firefox')) {
+    $stagingPath = [IO.Path]::GetFullPath((Join-Path $cleanupRoot $stagingName))
+    if ([IO.Path]::GetDirectoryName($stagingPath) -ne $cleanupRoot -or
+        [IO.Path]::GetFileName($stagingPath) -notin @('desktop','desktop-firefox')) {
+        throw "Unexpected staging cleanup path: $stagingPath"
+    }
+    if (!(Test-Path -LiteralPath $stagingPath)) { continue }
+    $stagingItem = Get-Item -LiteralPath $stagingPath
+    if ($stagingItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        Write-Warning "Preserving linked staging directory: $stagingPath"
+        continue
+    }
+    if (Get-ChildItem -LiteralPath $stagingPath -Filter 'mephisto-settings.json' -Recurse -File -ErrorAction SilentlyContinue) {
+        Write-Warning "Preserving staging with local settings: $stagingPath"
+        continue
+    }
+    $runningFromStaging = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($stagingPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    }
+    if ($runningFromStaging) {
+        Write-Warning "Preserving staging used by a running process: $stagingPath"
+        continue
+    }
+    try {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force -ErrorAction Stop
+        Write-Host "Removed staging: $stagingName"
+    } catch {
+        Write-Warning "Build succeeded; could not remove staging: $stagingPath. $($_.Exception.Message)"
+    }
+}

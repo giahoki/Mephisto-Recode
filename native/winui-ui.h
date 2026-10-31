@@ -38,7 +38,7 @@ struct DesktopApp : ui::ApplicationT<DesktopApp,ui::Markup::IXamlMetadataProvide
         return media::SolidColorBrush(winrt::Windows::UI::Color{255,(uint8_t)(rgb>>16),(uint8_t)(rgb>>8),(uint8_t)rgb});
     }
     void toggleAutoplay(bool armed) {
-        {std::lock_guard<std::mutex> guard(lock);if(settings.autoplay!=armed)armRevision++;settings.autoplay=armed;settingsRevision++;}
+        {std::lock_guard<std::mutex> guard(lock);if(settings.autoplay!=armed)armRevision++;settings.autoplay=armed;if(!armed)browserCommand=nullptr;settingsRevision++;}
         syncing=true;get<controls::ToggleSwitch>(L"Autoplay").IsOn(armed);syncing=false;
     }
     static LRESULT CALLBACK nativeProc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
@@ -63,6 +63,8 @@ struct DesktopApp : ui::ApplicationT<DesktopApp,ui::Markup::IXamlMetadataProvide
         for(int i=0;i<5;i++)get<controls::ToggleSwitch>(toggles[i]).IsOn(states[i]);
         get<controls::ComboBox>(L"Side").SelectedIndex(cfg.side);get<controls::ComboBox>(L"BoardTheme").SelectedIndex(cfg.theme);
         get<controls::ToggleSwitch>(L"Legit").IsOn(cfg.legit);
+        get<controls::Slider>(L"LegitSkill").Value(cfg.legitSkill);
+        get<controls::ComboBox>(L"InputMode").SelectedIndex(cfg.browserClicks?1:0);
         auto modelBox=get<controls::ComboBox>(L"EngineModel");modelBox.Items().Clear();int selected=(int)models.size()-1;
         for(size_t i=0;i<models.size();i++){
             std::wstring path=baseDirectory+L"\\"+models[i].file;std::wstring caption=models[i].name;
@@ -85,8 +87,10 @@ struct DesktopApp : ui::ApplicationT<DesktopApp,ui::Markup::IXamlMetadataProvide
         cfg.variant=variants[std::clamp(get<controls::ComboBox>(L"Variant").SelectedIndex(),0,(int)variants.size()-1)];
         cfg.puzzles=get<controls::ToggleSwitch>(L"PuzzleMode").IsOn();cfg.evaluation=get<controls::ToggleSwitch>(L"Evaluation").IsOn();
         cfg.legit=get<controls::ToggleSwitch>(L"Legit").IsOn();
+        cfg.legitSkill=value(L"LegitSkill",0,20,4);
+        cfg.browserClicks=get<controls::ComboBox>(L"InputMode").SelectedIndex()==1;
         cfg.threat=get<controls::ToggleSwitch>(L"Threat").IsOn();cfg.brain=get<controls::ToggleSwitch>(L"Brain").IsOn();cfg.coordinates=get<controls::ToggleSwitch>(L"Coordinates").IsOn();
-        {std::lock_guard<std::mutex> guard(lock);cfg.autoplay=settings.autoplay;settings=cfg;settingsRevision++;}
+        {std::lock_guard<std::mutex> guard(lock);cfg.autoplay=settings.autoplay;if(cfg.browserClicks!=settings.browserClicks)browserCommand=nullptr;settings=cfg;settingsRevision++;}
         saveSettings();boardSignature.clear();get<controls::TextBlock>(L"Saved").Text(L"Настройки сохранены");
     }
     void createBoard() {
@@ -127,6 +131,7 @@ struct DesktopApp : ui::ApplicationT<DesktopApp,ui::Markup::IXamlMetadataProvide
         State s;Settings cfg;std::string message,analysis,best,threat;std::vector<std::string> arrows;
         {std::lock_guard<std::mutex> guard(lock);s=latest;cfg=settings;message=status;if(fresh(s)&&s.revision==displayedRevision){analysis=analysisText;best=displayedBest;threat=displayedThreat;arrows=displayedMoves;}}
         syncing=true;get<controls::ToggleSwitch>(L"Autoplay").IsOn(cfg.autoplay);syncing=false;
+        get<controls::TextBlock>(L"InputHint").Text(cfg.browserClicks?L"Клики выполняются внутри вкладки. Браузер можно убрать в фон; вкладку с доской оставьте открытой.":L"Системная мышь: вернитесь в браузер, доска должна быть полностью видна. После возврата работа возобновится сама.");
         get<controls::TextBlock>(L"Connection").Text(fresh(s)?L"●  Браузер подключён":L"○  Ожидание браузера");
         auto bar=get<controls::InfoBar>(L"StatusBar");bar.Title(cfg.autoplay?L"Автоплей включён":L"Состояние");bar.Message(winrt::to_hstring(message));
         bar.Severity(message.rfind("Error:",0)==0?controls::InfoBarSeverity::Error:controls::InfoBarSeverity::Informational);
@@ -163,9 +168,9 @@ struct DesktopApp : ui::ApplicationT<DesktopApp,ui::Markup::IXamlMetadataProvide
             else browseEngine();
         });
         get<controls::Button>(L"Recommended").Click([this](auto const&,auto const&){Settings recommended;recommended.engine=baseDirectory+L"\\engines\\stockfish-17\\stockfish.exe";if(GetFileAttributesW(recommended.engine.c_str())==INVALID_FILE_ATTRIBUTES)recommended.engine=baseDirectory+L"\\stockfish.exe";fillSettings(&recommended);get<controls::TextBlock>(L"Saved").Text(L"Оптимальные значения выбраны. Нажмите «Сохранить настройки».");});
-        const wchar_t* sliderNames[]={L"ComputeTime",L"Threads",L"Hash",L"Lines",L"Skill",L"ThinkDelay",L"MoveTime",L"ThinkVariance",L"MoveVariance"};
-        const wchar_t* sliderCaptions[]={L"Анализ, мс",L"Потоки",L"Память, МБ",L"Линии анализа",L"Сила",L"Задержка хода, мс",L"Между кликами, мс",L"Разброс ожидания, мс",L"Разброс кликов, мс"};
-        for(int i=0;i<9;i++){auto slider=get<controls::Slider>(sliderNames[i]);std::wstring caption=sliderCaptions[i];
+        const wchar_t* sliderNames[]={L"ComputeTime",L"Threads",L"Hash",L"Lines",L"Skill",L"ThinkDelay",L"MoveTime",L"ThinkVariance",L"MoveVariance",L"LegitSkill"};
+        const wchar_t* sliderCaptions[]={L"Анализ, мс",L"Потоки",L"Память, МБ",L"Линии анализа",L"Сила",L"Задержка хода, мс",L"Между кликами, мс",L"Разброс ожидания, мс",L"Разброс кликов, мс",L"Сила Legit"};
+        for(int i=0;i<10;i++){auto slider=get<controls::Slider>(sliderNames[i]);std::wstring caption=sliderCaptions[i];
             slider.Header(winrt::box_value(caption+L": "+std::to_wstring((int)slider.Value())));
             slider.ValueChanged([caption](auto const& sender,auto const& args){sender.as<controls::Slider>().Header(winrt::box_value(caption+L": "+std::to_wstring((int)args.NewValue())));});
         }

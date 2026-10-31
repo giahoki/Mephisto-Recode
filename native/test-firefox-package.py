@@ -5,7 +5,11 @@ import pathlib
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-xpi = ROOT / 'desktop-firefox/Mephisto-Firefox-addon.xpi'
+xpi = ROOT / 'build/firefox/Mephisto-Firefox-addon.xpi'
+versioned = ROOT / 'build/firefox/Mephisto-Firefox-addon-3.0.6.xpi'
+if versioned.exists():
+    with zipfile.ZipFile(versioned) as check:
+        if json.loads(check.read('manifest.json'))['version']=='3.0.6':xpi=versioned
 
 def validate(payload):
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
@@ -13,13 +17,13 @@ def validate(payload):
         names = archive.namelist()
         assert all('\\' not in name for name in names)
         manifest = json.loads(archive.read('manifest.json'))
-        assert manifest['version'] == '3.0.3'
+        assert manifest['version'] == '3.0.6'
         assert 'default_locale' not in manifest
         assert '__MSG_' not in json.dumps(manifest)
         assert not any(name.startswith('_locales/') for name in names)
         assert 'service_worker' not in manifest['background']
         required = [manifest['background']['page'], manifest['action']['default_popup'],
-                    'src/scripts/desktop-background.js', 'lib/chess.js']
+                    'src/scripts/desktop-background.js', 'src/scripts/browser-input.js', 'lib/chess.js']
         required += list(manifest['icons'].values())
         for script in manifest['content_scripts']:
             required += script['js']
@@ -28,9 +32,6 @@ def validate(payload):
         assert b'browser.runtime' in archive.read('src/scripts/desktop-background.js')
 
 validate(xpi.read_bytes())
-delivered=(ROOT/'build/firefox/Mephisto-Firefox-addon.xpi').read_bytes()
-assert delivered==xpi.read_bytes()
-validate(delivered)
 with zipfile.ZipFile(ROOT/'build/firefox/Mephisto-Program.zip') as program:
     assert program.testzip() is None
     assert 'Mephisto.exe' in program.namelist()

@@ -3,13 +3,14 @@
   const session = crypto.randomUUID();
   let sequence = 0, busy = false, previous = '', stableSince = 0;
   let pointer = null, pointerSequence = 0;
+  let commandResult=null, lastCommandId='';
   document.addEventListener('mousemove', event => {
     if (event.isTrusted) pointer = {sequence: ++pointerSequence, x:event.clientX, y:event.clientY};
   }, {passive:true});
   function collect() {
     const cc = location.hostname.endsWith('chess.com');
     const board = document.querySelector(cc ? 'wc-chess-board, chess-board, .board' : '.main-board cg-board, .cg-wrap cg-board, cg-board, .chessground-board');
-    if (!board || document.visibilityState !== 'visible') return null;
+    if (!board) return null;
     const rect = board.getBoundingClientRect();
     if (rect.width < 100 || rect.height < 100 || rect.left < 0 || rect.top < 0 ||
         rect.right > innerWidth || rect.bottom > innerHeight) return null;
@@ -91,7 +92,7 @@
     return {session, sequence: ++sequence, url: location.href, title: document.title,
       placement, moves, turn, orientation: black?'black':'white',
       left, top, width: rect.width*scale, height: rect.height*scale,
-      pointer, scale, clockSeconds, clientLeft:rect.left, clientTop:rect.top, clientWidth:rect.width, clientHeight:rect.height,
+      pointer, commandResult, visible:document.visibilityState==='visible', scale, clockSeconds, clientLeft:rect.left, clientTop:rect.top, clientWidth:rect.width, clientHeight:rect.height,
       pockets: [...document.querySelectorAll('.pocket piece, .pocket .piece, .pocket-top piece, .pocket-bottom piece')].map(el => {
         const r = el.getBoundingClientRect();
         const type = names[el.getAttribute('data-role')] || [...el.classList].map(c => names[c]).find(Boolean);
@@ -114,7 +115,15 @@
     busy = true;
     try {
       const state = collect();
-      if (state) await chrome.runtime.sendMessage({type:'desktop-state', state});
+      if (state) {
+        const response=await chrome.runtime.sendMessage({type:'desktop-state', state});
+        const command=response?.browserCommand;
+        if(command&&command.id!==lastCommandId){
+          lastCommandId=command.id;
+          const current=collect();
+          commandResult=current?await globalThis.MephistoBrowserInput.perform(command,current,document,window,collect):{id:command.id,status:'rejected',reason:'Board is changing'};
+        }
+      }
     } catch (e) { /* Extension reload/disconnected host: retry next heartbeat. */ }
     finally { busy = false; }
   }, 250);

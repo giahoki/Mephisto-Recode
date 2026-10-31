@@ -4,6 +4,7 @@ const endpoint = 'http://127.0.0.1:17864/state';
 let inFlight = false;
 let variant = 'chess', configuredStart = '';
 let confirmation = null;
+let inputMode='mouse',controlledTabId=null;
 const starts = new Map();
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.type !== 'desktop-state' || !sender.tab) return;
@@ -11,9 +12,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   inFlight = true;
   (async () => {
     const tabs = await chrome.tabs.query({active:true, lastFocusedWindow:true});
-    if (tabs[0]?.id !== sender.tab.id) throw Error('Inactive tab');
+    if(tabs[0]?.id===sender.tab.id)controlledTabId=sender.tab.id;
+    else if(inputMode!=='browser'||controlledTabId!==sender.tab.id)throw Error('Inactive tab');
     const s = message.state;
-    let fen = '', reliable = false, historyLan = [], legalCount=0;
+    let fen = '', reliable = false, historyLan = [], legalCount=0, engineStartFen='', repetitionMoves=[], threefold=false;
     try {
       const key = `${s.session}/${variant}`;
       if (variant === 'fischerandom' && s.moves.length === 0 &&
@@ -26,13 +28,22 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (variant === 'fischerandom' && !start) throw Error('Chess960 starting FEN required');
       const chess = new Chess(variant, start);
       for (const san of s.moves) { const receipt=chess.move(san); if (!receipt) throw Error('Invalid SAN'); historyLan.push(receipt.lan); }
-      if (chess.fen().split(' ')[0].replace(/\[.*\]/, '').replaceAll('~','') === s.placement) { fen = chess.fen(); reliable = true;legalCount=chess.moves().length; }
+      if (chess.fen().split(' ')[0].replace(/\[.*\]/, '').replaceAll('~','') === s.placement) {
+        fen = chess.fen(); reliable = true;engineStartFen=chess.startFen();threefold=chess.isThreefoldRepetition();
+        const legal=chess.moves({verbose:true});legalCount=legal.length;
+        for(const move of legal){
+          chess.move(move);
+          if(chess.isThreefoldRepetition())repetitionMoves.push(move.lan);
+          chess.undo();
+        }
+      }
     } catch (e) { /* DOM may contain an incomplete or non-starting-position move list. */ }
     if (!fen && /^[wb]$/.test(s.turn)) fen = `${s.placement} ${s.turn} - - 0 1`;
     const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({...s, fen, reliable, legalCount, historyLan:reliable?historyLan:[], confirmation, variant, startFen:configuredStart, tabId:sender.tab.id}), signal:AbortSignal.timeout(1500)});
+      body:JSON.stringify({...s, fen, reliable, legalCount, engineStartFen,repetitionMoves,threefold, historyLan:reliable?historyLan:[], confirmation, variant, startFen:configuredStart, tabId:sender.tab.id}), signal:AbortSignal.timeout(1500)});
     if (!response.ok) throw Error('Desktop unavailable');
     const options = await response.json();
+    inputMode=options.inputMode||'mouse';
     if (options.variant) variant = options.variant;
     configuredStart = options.startFen || '';
     if (options.confirmMove) {
@@ -46,7 +57,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         } catch(e) { confirmation={id:request.id,error:e.message}; }
       }
     } else confirmation=null;
-    return {ok:true};
+    return {ok:true,inputMode,browserCommand:inputMode==='browser'?options.browserCommand:null};
   })().then(result => { inFlight = false; respond(result); },
     e => { inFlight = false; respond({ok:false, error:e.message}); });
   return true;

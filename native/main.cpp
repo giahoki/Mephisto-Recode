@@ -30,6 +30,8 @@ struct Settings {
     int side = 0; // board orientation, white, black
     std::string variant = "chess", startFen;
     bool legit=false;
+    int legitSkill=4;
+    bool browserClicks=false;
 };
 struct State { json data; Clock::time_point received{}; unsigned long long revision = 0; };
 std::mutex lock;
@@ -55,6 +57,21 @@ POINT calibratedTL{}, calibratedBR{};
 bool hasTL = false, calibrated = false;
 json calibrationReference;
 json moveConfirmationRequest;
+json browserCommand;
+HWND browserRoot(HWND hwnd) {
+    if(!hwnd)return nullptr;
+    HWND root=GetAncestor(hwnd,GA_ROOT);if(!root)root=hwnd;
+    wchar_t cls[256]{};GetClassNameW(root,cls,256);
+    if(std::wstring(cls)==L"MozillaWindowClass")return root;
+    if(std::wstring(cls)!=L"Chrome_WidgetWin_1")return nullptr;
+    DWORD pid=0;GetWindowThreadProcessId(root,&pid);
+    HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process)return nullptr;
+    wchar_t image[32768]{};DWORD length=32768;BOOL ok=QueryFullProcessImageNameW(process,0,image,&length);CloseHandle(process);if(!ok)return nullptr;
+    std::wstring name=image;name=name.substr(name.find_last_of(L"\\/")+1);
+    std::transform(name.begin(),name.end(),name.begin(),[](wchar_t c){return c>=L'A'&&c<=L'Z'?c+32:c;});
+    for(const auto* allowed:{L"chrome.exe",L"msedge.exe",L"brave.exe",L"opera.exe",L"vivaldi.exe",L"chromium.exe"})if(name==allowed)return root;
+    return nullptr;
+}
 
 std::string utf8(const std::wstring& value) {
     int n = WideCharToMultiByte(CP_UTF8,0,value.data(),(int)value.size(),nullptr,0,nullptr,nullptr);
@@ -71,7 +88,7 @@ void saveSettings() {
         {"lines",s.lines},{"delay",s.delay},{"skill",s.skill},{"side",s.side},{"puzzles",s.puzzles},
         {"evaluation",s.evaluation},{"threat",s.threat},{"brain",s.brain},{"coordinates",s.coordinates},
         {"theme",s.theme},{"moveTime",s.moveTime},{"thinkVariance",s.thinkVariance},{"moveVariance",s.moveVariance},
-        {"variant",s.variant},{"startFen",s.startFen},{"legit",s.legit}};
+        {"variant",s.variant},{"startFen",s.startFen},{"legit",s.legit},{"legitSkill",s.legitSkill},{"browserClicks",s.browserClicks}};
     std::ofstream file(settingsFile); file << j.dump(2);
 }
 void loadSettings() {
@@ -96,6 +113,8 @@ void loadSettings() {
         settings.variant=j.value("variant",std::string("chess"));if(std::find(variants.begin(),variants.end(),settings.variant)==variants.end())settings.variant="chess";
         settings.startFen=j.value("startFen",std::string{});
         settings.legit=j.value("legit",false);
+        settings.legitSkill=std::clamp(j.value("legitSkill",4),0,20);
+        settings.browserClicks=j.value("browserClicks",false);
     } catch (...) {}
     // Autoplay is deliberately armed per launch from the desktop window.
 }
@@ -154,7 +173,8 @@ public:
         send("setoption name Threads value " + std::to_string(s.threads));
         send("setoption name Hash value " + std::to_string(s.hash));
         send("setoption name MultiPV value " + std::to_string(s.legit?3:s.lines));
-        send("setoption name Skill Level value " + std::to_string(s.skill));
+        if(s.legit&&s.legitSkill<20&&capabilities.find("name Skill Level ")==std::string::npos)throw std::runtime_error("Для ослабленного Legit выберите движок с поддержкой Skill Level (Stockfish/Fairy-Stockfish).");
+        send("setoption name Skill Level value " + std::to_string(s.legit?s.legitSkill:s.skill));
         send("setoption name UCI_Chess960 value " + std::string(s.variant=="fischerandom"?"true":"false"));
         send("setoption name UCI_Variant value " + s.variant);
         send("isready"); waitFor("readyok");
@@ -220,18 +240,31 @@ void serveClient(SOCKET client) {
         for(const auto* key : {"left","top","width","height"}) { double n=data.at(key).get<double>(); if(!std::isfinite(n) || std::abs(n)>100000) throw std::runtime_error("Invalid geometry"); }
         if(data["width"].get<double>()<100 || data["height"].get<double>()<100) throw std::runtime_error("Invalid board");
         data.at("reliable").get<bool>(); data.at("focused").get<bool>();
+        auto start=data.value("engineStartFen",std::string{});
+        if(start.find_first_of("\r\n")!=std::string::npos)throw std::runtime_error("Invalid starting FEN");
+        if(data.contains("historyLan")){
+            if(!data["historyLan"].is_array()||data["historyLan"].size()>2000)throw std::runtime_error("Invalid move history");
+            for(const auto& item:data["historyLan"]){auto move=item.get<std::string>();if(move.empty()||move.size()>5||move.find_first_not_of("abcdefgh12345678PNBRQKpnbrqk@")!=std::string::npos)throw std::runtime_error("Invalid UCI history move");}
+        }
         {
             std::lock_guard<std::mutex> guard(lock);
             if (!latest.data.is_null() && latest.data["session"]==data["session"] && latest.data["sequence"].get<unsigned long long>()>=seq) { code=409; }
             else {
+                HWND foreground=browserRoot(GetForegroundWindow());DWORD pid=0;
+                uint64_t boundWindow=0,boundPid=0;
+                if(data.value("focused",false)&&foreground&&foreground!=windowHandle){GetWindowThreadProcessId(foreground,&pid);boundWindow=(uint64_t)(uintptr_t)foreground;boundPid=pid;}
+                else if(!latest.data.is_null()&&latest.data["session"]==data["session"]){boundWindow=latest.data.value("_nativeWindow",0ull);boundPid=latest.data.value("_nativeProcess",0ull);}
+                data["_nativeWindow"]=boundWindow;data["_nativeProcess"]=boundPid;
+                data["_nativeBrowserMode"]=settings.browserClicks;
+                if(!browserCommand.is_null()&&data.contains("commandResult")&&data["commandResult"].is_object()&&data["commandResult"].value("id",std::string{})==browserCommand.value("id",std::string{}))browserCommand=nullptr;
                 if(calibrated && !calibrationReference.is_null()) {
                     for(const auto* key:{"left","top","width","height","session"})if(data[key]!=calibrationReference[key]){
                         calibrated=false;hasTL=false;status="Board moved: coordinates will be detected automatically.";break;
                     }
                 }
-                bool changed=latest.data.is_null() || latest.data["fen"]!=data["fen"] || latest.data["session"]!=data["session"] || latest.data["url"]!=data["url"];
+                bool changed=latest.data.is_null() || latest.data["fen"]!=data["fen"] || latest.data["session"]!=data["session"] || latest.data["url"]!=data["url"] || latest.data.value("historyLan",json::array())!=data.value("historyLan",json::array());
                 latest.data=std::move(data); latest.received=Clock::now(); if(changed)latest.revision++;
-                code=200;body=json({{"ok",true},{"variant",settings.variant},{"startFen",settings.startFen},{"confirmMove",moveConfirmationRequest}}).dump();
+                code=200;body=json({{"ok",true},{"variant",settings.variant},{"startFen",settings.startFen},{"confirmMove",moveConfirmationRequest},{"browserCommand",settings.autoplay&&settings.browserClicks?browserCommand:json(nullptr)},{"inputMode",settings.browserClicks?"browser":"mouse"}}).dump();
             }
         }
     } catch(...) { code=400; }
@@ -250,14 +283,13 @@ void serverLoop() {
     closesocket(listener);listener=INVALID_SOCKET;WSACleanup();
 }
 
-bool fresh(const State& s) { return !s.data.is_null() && Clock::now()-s.received<1200ms; }
+bool fresh(const State& s) { return !s.data.is_null() && Clock::now()-s.received<(s.data.value("_nativeBrowserMode",false)?5000ms:1200ms); }
 bool browserInFront(const json& data) {
-    HWND fg=GetForegroundWindow(); if(!fg || fg==windowHandle)return false;
-    wchar_t title[4096]{};GetWindowTextW(fg,title,4096);
-    std::wstring expected=wide(data.value("title",std::string{}));
-    if(expected.empty() || std::wstring(title).find(expected)==std::wstring::npos)return false;
-    wchar_t cls[256]{};GetClassNameW(fg,cls,256);
-    return std::wstring(cls)==L"Chrome_WidgetWin_1" || std::wstring(cls)==L"MozillaWindowClass";
+    HWND fg=browserRoot(GetForegroundWindow());if(!fg||fg==windowHandle)return false;
+    DWORD pid=0;GetWindowThreadProcessId(fg,&pid);
+    std::lock_guard<std::mutex> guard(lock);
+    if(!fresh(latest)||Clock::now()-latest.received>=1200ms||latest.data["session"]!=data["session"]||!latest.data.value("focused",false))return false;
+    return latest.data.value("_nativeWindow",0ull)==(uint64_t)(uintptr_t)fg&&latest.data.value("_nativeProcess",0ull)==pid;
 }
 bool clickAt(double x,double y,const json& data,double clientX=std::nan(""),double clientY=std::nan("")) {
     {std::lock_guard<std::mutex> guard(lock);if(!settings.autoplay)return false;}
@@ -318,7 +350,7 @@ std::pair<double,double> squareCenter(const std::string& square,const json& data
 }
 bool stillCurrent(const State& s,unsigned long long version) {
     std::lock_guard<std::mutex> guard(lock);
-    if(!settings.autoplay || settingsRevision.load()!=version || !fresh(latest) || !latest.data.value("focused",false) || latest.revision!=s.revision)return false;
+    if(!settings.autoplay || settingsRevision.load()!=version || !fresh(latest) || (!settings.browserClicks&&!latest.data.value("focused",false)) || latest.revision!=s.revision)return false;
     for(const auto* key : {"left","top","width","height","orientation"}) if(latest.data[key]!=s.data[key])return false;
     return true;
 }
@@ -328,11 +360,12 @@ void workerLoop() {
     std::string awaitingPlacement,awaitingSession,awaitingMove,awaitingId;size_t awaitingHistoryIndex=0;Clock::time_point clickedAt{};
     std::mt19937 random(std::random_device{}());std::vector<play::Candidate> candidates;
     std::string attemptKey;int attempts=0;bool sourceSelected=false;Clock::time_point retryAt=Clock::time_point::max();
+    play::FocusRecovery focusRecovery;
     while(running) {
         try {
             State s;Settings cfg;unsigned long long version;
             {std::lock_guard<std::mutex> guard(lock);s=latest;cfg=settings;version=settingsRevision.load();}
-            auto currentArmRevision=armRevision.load();if(currentArmRevision!=lastArmRevision){lastPlayed.clear();awaitingPlacement.clear();pendingPromotion.clear();attempts=0;retryAt=Clock::time_point::max();{std::lock_guard<std::mutex> guard(lock);moveConfirmationRequest=nullptr;}lastArmRevision=currentArmRevision;}
+            auto currentArmRevision=armRevision.load();if(currentArmRevision!=lastArmRevision){lastPlayed.clear();awaitingPlacement.clear();pendingPromotion.clear();attempts=0;focusRecovery={};retryAt=Clock::time_point::max();{std::lock_guard<std::mutex> guard(lock);moveConfirmationRequest=nullptr;browserCommand=nullptr;}lastArmRevision=currentArmRevision;}
             if(!awaitingPlacement.empty()) {
                 if(!cfg.autoplay || (!s.data.is_null() && s.data["session"]!=awaitingSession))awaitingPlacement.clear();
                 else if(fresh(s) && s.data["promotion"].empty() &&
@@ -360,11 +393,19 @@ void workerLoop() {
                 }
                 std::this_thread::sleep_for(50ms);continue;
             }
-            std::string key=utf8(cfg.engine)+"/"+std::to_string(cfg.threads)+"/"+std::to_string(cfg.hash)+"/"+std::to_string(cfg.legit?3:cfg.lines)+"/"+std::to_string(cfg.skill)+"/"+cfg.variant;
-            if(key!=engineKey){engine.start(cfg);engineKey=key;analyzed=0;}
+            if(s.data.value("threefold",false)){setStatus("Позиция повторилась трижды: ничья. Ожидаем новую партию.");std::this_thread::sleep_for(150ms);continue;}
+            Settings engineCfg=cfg;if(!s.data.value("repetitionMoves",json::array()).empty())engineCfg.lines=std::max(3,cfg.lines);
+            std::string key=utf8(cfg.engine)+"/"+std::to_string(cfg.threads)+"/"+std::to_string(cfg.hash)+"/"+std::to_string(cfg.legit?3:engineCfg.lines)+"/"+std::to_string(cfg.legit?cfg.legitSkill:cfg.skill)+"/"+cfg.variant;
+            if(key!=engineKey){engine.start(engineCfg);engineKey=key;analyzed=0;}
             if(s.data.value("fen",std::string{}).empty()){setStatus("Cannot determine turn. For Chess960/custom games, supply the starting FEN or open the starting position.");std::this_thread::sleep_for(100ms);continue;}
             if(analyzed!=s.revision || analyzedTime!=cfg.time || analyzedSettingsVersion!=version) {
-                engine.send("position fen "+s.data["fen"].get<std::string>());
+                std::string position=s.data["fen"].get<std::string>();
+                if(s.data.value("reliable",false)&&!s.data.value("engineStartFen",std::string{}).empty()){
+                    position=s.data["engineStartFen"].get<std::string>();
+                    const auto history=s.data.value("historyLan",json::array());
+                    if(!history.empty()){position+=" moves";for(const auto& move:history)position+=" "+move.get<std::string>();}
+                }
+                engine.send("position fen "+position);
                 engine.send("go movetime "+std::to_string(cfg.time));
                 auto deadline=Clock::now()+std::chrono::milliseconds(cfg.time)+5s;
                 bool canceled=false,done=false; std::map<int,std::string> lines;bestMove.clear();
@@ -384,15 +425,21 @@ void workerLoop() {
                 analyzed=s.revision;analyzedTime=cfg.time;analyzedSettingsVersion=version;
                 candidates.clear();for(const auto& entry:lines){auto c=play::parse(entry.second);if(!c.move.empty())candidates.push_back(c);if(candidates.size()==3)break;}
                 int pieces=0;for(char p:s.data.value("placement",std::string{}))if(std::isalpha((unsigned char)p))pieces++;
-                if(cfg.legit&&!candidates.empty())bestMove=candidates[play::choose(candidates,pieces,random)].move;
+                if(cfg.legit)bestMove=play::selectMove(bestMove,candidates,pieces,cfg.legitSkill,random);
+                auto beforeRepetitionCheck=bestMove;
+                bestMove=play::avoidRepetition(bestMove,candidates,s.data.value("repetitionMoves",std::vector<std::string>{}));
+                bool selectedOutsideLines=cfg.legit&&!candidates.empty()&&std::none_of(candidates.begin(),candidates.end(),[&](const auto& c){return c.move==bestMove;});
                 std::string display,reply;
                 if(lines.count(1)){auto pv=lines[1].find(" pv ");if(pv!=std::string::npos){std::istringstream moves(lines[1].substr(pv+4));std::string first;moves>>first>>reply;}}
                 for(const auto& pair:lines) {
+                    if(selectedOutsideLines&&pair.first>=3){display+="3. Engine strength-selected move: "+bestMove+"\r\n\r\n";break;}
                     auto pv=pair.second.find(" pv ");std::string value=pair.second;
                     if(!cfg.evaluation && pv!=std::string::npos)value="PV "+pair.second.substr(pv+4);
                     display+=std::to_string(pair.first)+". "+value+"\r\n\r\n";
                 }
                 std::string heading=(cfg.legit?"Selected move: ":"Best move: ")+bestMove;
+                if(cfg.legit)heading+="\r\nLegit skill: "+std::to_string(cfg.legitSkill)+" / 20";
+                if(beforeRepetitionCheck!=bestMove)heading+="\r\nAvoided threefold repetition";
                 if(cfg.brain && bestMove.size()>=2) {
                     std::string placement=s.data["placement"];int file=0,rank=7;char piece='?';
                     for(char ch:placement){if(ch=='/'){rank--;file=0;}else if(ch>='1'&&ch<='8')file+=ch-'0';else {if(file==bestMove[0]-'a' && rank==bestMove[1]-'1')piece=(char)std::toupper((unsigned char)ch);file++;}}
@@ -402,12 +449,16 @@ void workerLoop() {
                 if(cfg.threat && !reply.empty())heading+="\r\nExpected reply: "+reply;
                 const auto fenNow=s.data["fen"].get<std::string>();const auto turnNow=fenNow.substr(fenNow.find(' ')+1,1);
                 const std::string ownSide=cfg.side==1?"w":cfg.side==2?"b":s.data["orientation"]=="white"?"w":"b";
-                {std::lock_guard<std::mutex> guard(lock);analysisText=heading+"\r\n\r\n"+display;displayedBest=cfg.brain||turnNow!=ownSide?"":bestMove;displayedMoves.clear();if(!displayedBest.empty()){if(cfg.legit)for(const auto& c:candidates)displayedMoves.push_back(c.move);else displayedMoves.push_back(bestMove);}displayedThreat="";displayedRevision=s.revision;}
+                {std::lock_guard<std::mutex> guard(lock);analysisText=heading+"\r\n\r\n"+display;displayedBest=cfg.brain||turnNow!=ownSide?"":bestMove;displayedMoves.clear();if(!displayedBest.empty()){if(cfg.legit){for(const auto& c:candidates)displayedMoves.push_back(c.move);if(selectedOutsideLines){if(displayedMoves.size()==3)displayedMoves[2]=bestMove;else displayedMoves.push_back(bestMove);}}else displayedMoves.push_back(bestMove);}displayedThreat="";displayedRevision=s.revision;}
                 setStatus(s.data.value("reliable",false)?"Position verified against move history.":"Piece-only position: castling/en passant unknown. Enable puzzle mode to autoplay.");
             }
             std::string playedKey=s.data["session"].get<std::string>()+s.data["fen"].get<std::string>();
             if(attemptKey!=playedKey){attemptKey=playedKey;attempts=0;sourceSelected=false;retryAt=Clock::time_point::max();}
-            if(lastPlayed==playedKey&&awaitingPlacement.empty()&&Clock::now()>=retryAt&&play::retryAllowed(attempts,true,fresh(s),s.data.value("focused",false))&&browserInFront(s.data)){
+            bool inputReady=cfg.browserClicks||browserInFront(s.data);
+            if(cfg.autoplay&&focusRecovery.update(inputReady,GetTickCount64())&&awaitingPlacement.empty()&&lastPlayed==playedKey){
+                attempts=sourceSelected?1:0;lastPlayed.clear();retryAt=Clock::time_point::max();setStatus("Фокус браузера восстановлен. Автоплей продолжается автоматически.");
+            }
+            if(lastPlayed==playedKey&&awaitingPlacement.empty()&&Clock::now()>=retryAt&&play::retryAllowed(attempts,true,fresh(s),cfg.browserClicks||s.data.value("focused",false))&&inputReady){
                 lastPlayed.clear();retryAt=Clock::time_point::max();setStatus("Повторная попытка: "+std::to_string(attempts+1)+" из 3.");
             }
             bool drop=bestMove.size()==4 && bestMove[1]=='@' && std::string("PNBRQpnbrq").find(bestMove[0])!=std::string::npos;
@@ -418,14 +469,22 @@ void workerLoop() {
                 auto fen=s.data["fen"].get<std::string>();auto turn=fen.substr(fen.find(' ')+1,1);
                 std::string side=cfg.side==1?"w":cfg.side==2?"b":s.data["orientation"]=="white"?"w":"b";
                 if(turn!=side){setStatus("Автоплей готов: ожидаем ход соперника.");std::this_thread::sleep_for(100ms);continue;}
-                if(!browserInFront(s.data)){setStatus("Автоплей готов: вернитесь в браузер и откройте доску полностью.");std::this_thread::sleep_for(100ms);continue;}
+                if(!inputReady){setStatus("Автоплей приостановлен: ждём фокус браузера. Продолжится автоматически.");std::this_thread::sleep_for(100ms);continue;}
                 auto variation=[&](int maximum){return maximum?std::uniform_int_distribution<int>(0,maximum)(random):0;};
                 int pieces=0;for(char p:s.data.value("placement",std::string{}))if(std::isalpha((unsigned char)p))pieces++;
                 int waitMs=cfg.legit?play::delay(candidates,pieces,s.data.value("legalCount",0),s.data.value("clockSeconds",-1.0),cfg.time,random):cfg.delay+variation(cfg.thinkVariance);
                 if(attempts>0)waitMs=250+variation(400);
                 auto until=Clock::now()+std::chrono::milliseconds(waitMs);
-                while(running && Clock::now()<until && stillCurrent(s,version))std::this_thread::sleep_for(10ms);
-                if(!running || !stillCurrent(s,version))continue;
+                while(running && Clock::now()<until && stillCurrent(s,version) && (cfg.browserClicks||browserInFront(s.data)))std::this_thread::sleep_for(10ms);
+                if(!running || !stillCurrent(s,version)||(!cfg.browserClicks&&!browserInFront(s.data))){focusRecovery.update(false,GetTickCount64());continue;}
+                if(cfg.browserClicks){
+                    attempts++;lastPlayed=playedKey;awaitingPlacement=s.data["placement"];awaitingSession=s.data["session"];clickedAt=Clock::now();
+                    awaitingMove=bestMove;awaitingHistoryIndex=s.data.value("moves",json::array()).size();awaitingId=std::to_string(GetTickCount64());
+                    {std::lock_guard<std::mutex> guard(lock);
+                        browserCommand={{"id",awaitingId},{"move",bestMove},{"placement",s.data["placement"]},{"session",s.data["session"]},{"orientation",s.data["orientation"]},{"destinationOnly",attempts==2},{"delay",std::max(100,cfg.moveTime)+variation(std::max(60,cfg.moveVariance))}};
+                        moveConfirmationRequest={{"id",awaitingId},{"move",bestMove},{"fen",s.data["fen"]},{"variant",cfg.variant}};
+                    }setStatus("Команда передана аддону. Ожидаем подтверждение хода от доски.");continue;
+                }
                 auto from=drop?std::make_pair(0.0,0.0):squareCenter(bestMove.substr(0,2),s.data),to=squareCenter(bestMove.substr(2,2),s.data);
                 auto fromClient=drop?std::make_pair(std::nan(""),std::nan("")):squareClientCenter(bestMove.substr(0,2),s.data),toClient=squareClientCenter(bestMove.substr(2,2),s.data);
                 if(drop){
