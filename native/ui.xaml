@@ -1,0 +1,56 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" RequestedTheme="Dark" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+ <Grid.Resources>
+  <Style TargetType="Border" x:Key="Card"><Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/><Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="24"/></Style>
+  <Style TargetType="TextBlock" x:Key="Caption"><Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/><Setter Property="FontSize" Value="13"/></Style>
+ </Grid.Resources>
+ <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+ <Grid x:Name="TitleBar" Margin="20,0,140,0"><StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center"><Border Background="#80AFFF" Width="26" Height="26" CornerRadius="7"><TextBlock Text="M" FontWeight="Bold" Foreground="#111C2C" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><TextBlock Text="Mephisto" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Text="DESKTOP" CharacterSpacing="160" FontSize="10" Opacity="0.5" VerticalAlignment="Center"/></StackPanel></Grid>
+ <NavigationView x:Name="Navigation" Grid.Row="1" IsBackButtonVisible="Collapsed" IsSettingsVisible="False" IsPaneToggleButtonVisible="False" PaneDisplayMode="Left" OpenPaneLength="190" IsPaneOpen="True" AlwaysShowHeader="False">
+  <NavigationView.MenuItems>
+   <NavigationViewItem Content="Обзор" Tag="overview" IsSelected="True"><NavigationViewItem.Icon><SymbolIcon Symbol="Home"/></NavigationViewItem.Icon></NavigationViewItem>
+   <NavigationViewItem Content="Настройки" Tag="settings"><NavigationViewItem.Icon><SymbolIcon Symbol="Setting"/></NavigationViewItem.Icon></NavigationViewItem>
+  </NavigationView.MenuItems>
+  <NavigationView.PaneFooter><StackPanel Margin="20" Spacing="8"><TextBlock Text="УПРАВЛЕНИЕ" FontSize="10" CharacterSpacing="120" Opacity="0.4"/><TextBlock Text="Координаты: авто" Style="{StaticResource Caption}"/><TextBlock Text="F10 · вкл. / выкл." Style="{StaticResource Caption}"/></StackPanel></NavigationView.PaneFooter>
+  <Grid Margin="28,12,28,24">
+   <Grid x:Name="Overview">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Grid Margin="0,0,0,20"><StackPanel Spacing="5"><TextBlock Text="Рабочая доска" FontSize="30" FontWeight="SemiBold"/><TextBlock Text="Анализ позиции и управление игрой" Style="{StaticResource Caption}"/></StackPanel><Border HorizontalAlignment="Right" VerticalAlignment="Center" CornerRadius="16" Background="#21352E" Padding="14,7"><TextBlock x:Name="Connection" Text="Ожидание браузера" Foreground="#A6DDBC" FontSize="12"/></Border></Grid>
+    <InfoBar x:Name="StatusBar" Grid.Row="1" IsOpen="True" IsClosable="False" Severity="Informational" Title="Подключение" Message="Запустите аддон и откройте страницу с доской." Margin="0,0,0,20"/>
+    <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="1.2*"/><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <Border Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Grid Margin="0,0,0,18"><TextBlock Text="ПОЗИЦИЯ" FontSize="11" CharacterSpacing="140" Opacity="0.5"/><TextBlock x:Name="Turn" HorizontalAlignment="Right" Text="—" Style="{StaticResource Caption}"/></Grid>
+      <Viewbox Grid.Row="1" Stretch="Uniform" MaxWidth="580" MaxHeight="580"><Grid Width="520" Height="520"><Grid x:Name="BoardGrid" Width="480" Height="480"/><Canvas x:Name="BoardArrows" Width="480" Height="480" IsHitTestVisible="False"/><Canvas x:Name="BoardCoordinates" Width="520" Height="520" IsHitTestVisible="False"/></Grid></Viewbox>
+      <Button x:Name="OpenAnalysis" Grid.Row="2" Content="Открыть в анализаторе ↗" HorizontalAlignment="Stretch" Margin="0,18,0,0"/></Grid></Border>
+     <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"><StackPanel Spacing="16">
+      <Border Style="{StaticResource Card}"><StackPanel Spacing="14"><TextBlock Text="АВТОПЛЕЙ" FontSize="11" CharacterSpacing="140" Opacity="0.5"/><ToggleSwitch x:Name="Autoplay" Header="Управление мышью" OffContent="Выключено" OnContent="Включено"/><TextBlock Text="Вернитесь в браузер, чтобы делать ходы. Доска должна быть полностью видна." TextWrapping="Wrap" Style="{StaticResource Caption}"/><Button x:Name="Stop" Content="Остановить · F10" HorizontalAlignment="Stretch"/></StackPanel></Border>
+      <Border Style="{StaticResource Card}"><StackPanel Spacing="14"><TextBlock Text="АНАЛИЗ" FontSize="11" CharacterSpacing="140" Opacity="0.5"/><TextBlock x:Name="BestMove" Text="—" FontSize="36" FontWeight="SemiBold" Foreground="#90B8FF"/><TextBlock x:Name="Analysis" Text="Здесь появятся лучший ход, оценка и линии движка." TextWrapping="Wrap" FontFamily="Cascadia Code, Consolas" FontSize="12" IsTextSelectionEnabled="True"/></StackPanel></Border>
+      <Expander Header="Данные позиции" HorizontalAlignment="Stretch"><StackPanel Spacing="10"><TextBlock x:Name="PageUrl" Text="Нет активной доски" TextWrapping="Wrap" Style="{StaticResource Caption}"/><TextBlock x:Name="Fen" Text="—" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" IsTextSelectionEnabled="True"/></StackPanel></Expander>
+     </StackPanel></ScrollViewer>
+    </Grid>
+   </Grid>
+   <Grid x:Name="SettingsView" Visibility="Collapsed"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel Margin="0,0,0,24" Spacing="6"><TextBlock Text="Настройки" FontSize="30" FontWeight="SemiBold"/><TextBlock Text="Движок, поведение автоплея и внешний вид" Style="{StaticResource Caption}"/></StackPanel>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><StackPanel Spacing="16" Padding="0,0,8,20">
+     <Border Style="{StaticResource Card}"><StackPanel Spacing="18"><Grid><TextBlock Text="Движок" FontSize="20" FontWeight="SemiBold"/><Button x:Name="Recommended" Content="Оптимальные настройки" HorizontalAlignment="Right"/></Grid><ComboBox x:Name="EngineModel" Header="Модель / версия движка" HorizontalAlignment="Stretch"/>
+      <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="EnginePath" Header="Локальный UCI-движок"/><Button x:Name="Browse" Grid.Column="1" Content="Обзор…" VerticalAlignment="Bottom"/></Grid>
+      <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Slider x:Name="ComputeTime" StepFrequency="100" Header="Анализ, мс" Minimum="100" Maximum="10000"/><Slider x:Name="Threads" StepFrequency="1" Grid.Column="1" Header="Потоки" Minimum="1" Maximum="128"/><Slider x:Name="Hash" StepFrequency="32" Grid.Column="2" Header="Память, МБ" Minimum="32" Maximum="8192"/></Grid>
+      <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Slider x:Name="Lines" StepFrequency="1" Header="Линии анализа" Minimum="1" Maximum="10"/><Slider x:Name="Skill" StepFrequency="1" Grid.Column="1" Header="Сила, 0–20" Minimum="0" Maximum="20"/><ComboBox x:Name="Variant" Grid.Column="2" Header="Вариант" HorizontalAlignment="Stretch"/></Grid>
+      <TextBox x:Name="StartFen" Header="Начальный FEN" PlaceholderText="Необязательно · для Chess960 и нестандартных расстановок"/>
+     </StackPanel></Border>
+     <Border Style="{StaticResource Card}"><StackPanel Spacing="18"><TextBlock Text="Автоплей" FontSize="20" FontWeight="SemiBold"/>
+      <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><ComboBox x:Name="Side" Header="Играть за" HorizontalAlignment="Stretch"><x:String>По ориентации доски</x:String><x:String>Белых</x:String><x:String>Чёрных</x:String></ComboBox><Slider x:Name="ThinkDelay" StepFrequency="50" Grid.Column="1" Header="Задержка хода, мс" Minimum="0" Maximum="10000"/><Slider x:Name="MoveTime" StepFrequency="10" Grid.Column="2" Header="Между кликами, мс" Minimum="40" Maximum="2000"/></Grid>
+      <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Slider x:Name="ThinkVariance" StepFrequency="10" Header="Разброс ожидания, мс" Minimum="0" Maximum="5000"/><Slider x:Name="MoveVariance" StepFrequency="10" Grid.Column="1" Header="Разброс кликов, мс" Minimum="0" Maximum="1000"/><ToggleSwitch x:Name="PuzzleMode" Grid.Column="2" Header="Головоломки" OffContent="Строгая проверка" OnContent="По фигурам"/></Grid>
+      <ToggleSwitch x:Name="Legit" Header="Legit · вариативная игра" OffContent="Основная линия" OnContent="3 линии · случайный подходящий ход"/><TextBlock Text="Более слабые варианты отбрасываются, задержки учитывают сложность позиции и оставшееся время. Координаты определяются автоматически. При сбое ввода выполняется до трёх попыток." TextWrapping="Wrap" Style="{StaticResource Caption}"/>
+      <Button x:Name="ResetCalibration" Content="Перепроверить координаты автоматически"/>
+     </StackPanel></Border>
+     <Border Style="{StaticResource Card}"><StackPanel Spacing="18"><TextBlock Text="Отображение" FontSize="20" FontWeight="SemiBold"/>
+      <Grid ColumnSpacing="20"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><ToggleSwitch x:Name="Evaluation" Header="Оценка движка"/><ToggleSwitch x:Name="Threat" Grid.Column="1" Header="Ответ соперника"/><ToggleSwitch x:Name="Brain" Grid.Column="2" Header="Hand &amp; Brain"/></Grid>
+      <Grid ColumnSpacing="20"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><ComboBox x:Name="BoardTheme" Header="Тема доски" HorizontalAlignment="Stretch"><x:String>Орех</x:String><x:String>Шалфей</x:String><x:String>Сланец</x:String></ComboBox><ToggleSwitch x:Name="Coordinates" Grid.Column="1" Header="Координаты"/><ComboBox x:Name="AppTheme" Grid.Column="2" Header="Интерфейс" HorizontalAlignment="Stretch" SelectedIndex="0"><x:String>Тёмный</x:String><x:String>Светлый</x:String></ComboBox></Grid>
+     </StackPanel></Border>
+    </StackPanel></ScrollViewer>
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="16" Padding="0,16,0,0"><Button x:Name="Apply" Content="Сохранить настройки" Style="{ThemeResource AccentButtonStyle}"/><TextBlock x:Name="Saved" VerticalAlignment="Center" Style="{StaticResource Caption}"/></StackPanel>
+   </Grid>
+  </Grid>
+ </NavigationView>
+</Grid>

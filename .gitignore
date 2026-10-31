@@ -1,0 +1,40 @@
+# Editor and OS metadata
+.idea/
+.vs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.vcxproj.user
+*.suo
+*.userosscache
+
+# Application distributions and intermediate staging directories
+/build/
+/desktop/
+/desktop-firefox/
+/Mephisto-*.zip
+/Mephisto-*.xpi
+
+# MSBuild / C++/WinRT generated files, downloaded SDKs and diagnostics
+/native/obj/
+/native/Generated Files/
+/native/packages/
+/native/tools/
+/native/engine-cache/
+*.obj
+*.pdb
+*.ilk
+*.tlog
+*.lastbuildstate
+*.VC.db
+*.VC.VC.opendb
+
+# Downloaded engine payloads; keep the bundled bin/stockfish.exe visible to Git
+/bin/engines/
+
+# Local settings and Python test caches
+mephisto-settings.json
+startup-error.txt
+__pycache__/
+*.py[cod]
+.pytest_cache/

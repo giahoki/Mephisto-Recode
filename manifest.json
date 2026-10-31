@@ -1,0 +1,48 @@
+{
+  "update_url": "https://clients2.google.com/service/update2/crx",
+  "manifest_version": 3,
+  "name": "Mephisto Chess Extension",
+  "description": "Next best move analysis for your favorite chess websites",
+  "version": "3.0.3",
+  "homepage_url": "https://github.com/AlexPetrusca/Mephisto",
+  "author": "Alex Petrusca",
+  "icons": {
+    "16": "res/icons/icon16.png",
+    "32": "res/icons/icon32.png",
+    "48": "res/icons/icon48.png",
+    "128": "res/icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "res/icons/icon16.png",
+      "32": "res/icons/icon32.png",
+      "48": "res/icons/icon48.png",
+      "128": "res/icons/icon128.png"
+    },
+    "default_popup": "src/popup/desktop.html"
+  },
+  "permissions": [],
+  "background": {
+    "service_worker": "src/scripts/desktop-background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.chess.com/*",
+        "*://lichess.org/*",
+        "*://blitztactics.com/*"
+      ],
+      "js": [
+        "src/scripts/desktop-core.js"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:17864/*"
+  ],
+  "default_locale": "en"
+}
